@@ -860,29 +860,62 @@ client.on('interactionCreate', async interaction => {
         });
         
         // Trouver le membre et lui ajouter le rôle
+        // Dans la partie où vous traitez les boutons de validation/refus, vers la ligne 867
         try {
-          const userMember = await interaction.guild.members.fetch(userId);
-          
-          if (guildConfig.validRequestRoleId) {
-            await userMember.roles.add(guildConfig.validRequestRoleId);
-            logInfo(`Rôle de validation ajouté à ${userMember.user.tag}`);
+            // Récupérer l'objet guild à partir de l'interaction
+            const guild = interaction.guild;
+            const userMember = await guild.members.fetch(userId);
             
-            await channel.send({
-              content: `Le rôle <@&${guildConfig.validRequestRoleId}> a été attribué à <@${userId}>.`
-            });
-          } else {
+            if (guildConfig.validRequestRoleId) {
+            // Récupérer le rôle à ajouter
+            const roleToAdd = guild.roles.cache.get(guildConfig.validRequestRoleId);
+            
+            // Vérification détaillée du rôle
+            if (!roleToAdd) {
+                await channel.send({
+                content: `⚠️ Erreur: Le rôle avec l'ID ${guildConfig.validRequestRoleId} n'existe pas.`
+                });
+                return;
+            }
+            
+            // Vérification de la hiérarchie - utilisez directement PermissionsBitField du module discord.js
+            if (guild.members.me.roles.highest.position <= roleToAdd.position) {
+                await channel.send({
+                content: `⚠️ Erreur: Je ne peux pas attribuer ce rôle car il est positionné plus haut que mon rôle le plus élevé dans la hiérarchie.`
+                });
+                logWarning(`Problème de hiérarchie de rôles: Bot (${guild.members.me.roles.highest.position}) vs Rôle (${roleToAdd.position})`);
+                return;
+            }
+            
+            // Tenter d'ajouter le rôle avec gestion spécifique des erreurs
+            try {
+                await userMember.roles.add(roleToAdd);
+                logInfo(`Rôle de validation ajouté à ${userMember.user.tag}`);
+                
+                await channel.send({
+                content: `Le rôle <@&${guildConfig.validRequestRoleId}> a été attribué à <@${userId}>.`
+                });
+            } catch (roleError) {
+                // Gestion détaillée de l'erreur d'ajout de rôle
+                const errorDetails = `Code: ${roleError.code}, Message: ${roleError.message}`;
+                logError(`Erreur précise lors de l'ajout du rôle: ${errorDetails}`);
+                
+                await channel.send({
+                content: `⚠️ Je n'ai pas pu attribuer le rôle pour la raison suivante: ${errorDetails}`
+                });
+            }
+            } else {
             logWarning(`Le rôle de validation n'est pas configuré pour le serveur ${interaction.guild.name}`);
             await channel.send({
-              content: `⚠️ Attention : Le rôle de validation n'est pas configuré correctement. Veuillez contacter un administrateur.`
+                content: `⚠️ Attention : Le rôle de validation n'est pas configuré correctement. Veuillez contacter un administrateur.`
             });
-          }
+            }
         } catch (error) {
-          logError(`Erreur lors de l'ajout du rôle à l'utilisateur ${userId}`, error);
-          await channel.send({
-            content: `⚠️ Erreur lors de l'attribution du rôle à <@${userId}>. Veuillez vérifier que le rôle existe et que le bot a les permissions nécessaires.`
-          });
+            logError(`Erreur lors de l'ajout du rôle à l'utilisateur ${userId}`, error);
+            await channel.send({
+            content: `⚠️ Erreur lors de l'attribution du rôle à <@${userId}>. Détails: ${error.message} (Code: ${error.code || "aucun code"})`
+            });
         }
-        
       } else {
         // Si refusé, déplacer vers une catégorie des demandes refusées (à créer si nécessaire)
         let rejectedCategory = interaction.guild.channels.cache.find(
@@ -987,7 +1020,7 @@ client.on('interactionCreate', async interaction => {
         embeds: [responseEmbed]
       });
       
-      // Obtenir l'objet canal
+      // Obtenir l'objet canal et guild
       const channel = interaction.channel;
       const guild = interaction.guild;
       
@@ -997,12 +1030,51 @@ client.on('interactionCreate', async interaction => {
           const userMember = await guild.members.fetch(userId);
           
           if (guildConfig.validWlRoleId) {
-            await userMember.roles.add(guildConfig.validWlRoleId);
-            logInfo(`Rôle de WL validée ajouté à ${userMember.user.tag}`);
+            // Récupérer le rôle à ajouter
+            const roleToAdd = guild.roles.cache.get(guildConfig.validWlRoleId);
             
-            await channel.send({
-              content: `🎉 Félicitations <@${userId}>! Le rôle <@&${guildConfig.validWlRoleId}> vous a été attribué, vous êtes maintenant whitelisté sur le serveur.`
-            });
+            // Vérifier si le rôle existe
+            if (!roleToAdd) {
+              await channel.send({
+                content: `⚠️ Erreur: Le rôle avec l'ID ${guildConfig.validWlRoleId} n'existe pas.`
+              });
+              return;
+            }
+            
+            // Vérifier la hiérarchie des rôles
+            if (guild.members.me.roles.highest.position <= roleToAdd.position) {
+              await channel.send({
+                content: `⚠️ Erreur: Je ne peux pas attribuer ce rôle car il est positionné plus haut que mon rôle le plus élevé dans la hiérarchie.`
+              });
+              logWarning(`Problème de hiérarchie de rôles: Bot (${guild.members.me.roles.highest.position}) vs Rôle (${roleToAdd.position})`);
+              return;
+            }
+            
+            // Vérifier la permission de gérer les rôles - utilisez PermissionsBitField, pas PermissionFlagsBits
+            if (!guild.members.me.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+              await channel.send({
+                content: `⚠️ Je n'ai pas la permission de gérer les rôles. Veuillez donner la permission "Gérer les rôles" à mon rôle.`
+              });
+              return;
+            }
+            
+            // Tenter d'ajouter le rôle avec gestion spécifique des erreurs
+            try {
+              await userMember.roles.add(roleToAdd);
+              logInfo(`Rôle de WL validée ajouté à ${userMember.user.tag}`);
+              
+              await channel.send({
+                content: `🎉 Félicitations <@${userId}>! Le rôle <@&${guildConfig.validWlRoleId}> vous a été attribué, vous êtes maintenant whitelisté sur le serveur.`
+              });
+            } catch (roleError) {
+              // Gestion détaillée de l'erreur d'ajout de rôle
+              const errorDetails = `Code: ${roleError.code}, Message: ${roleError.message}`;
+              logError(`Erreur précise lors de l'ajout du rôle: ${errorDetails}`);
+              
+              await channel.send({
+                content: `⚠️ Je n'ai pas pu attribuer le rôle pour la raison suivante: ${errorDetails}`
+              });
+            }
           } else {
             logWarning(`Le rôle de WL finale n'est pas configuré pour le serveur ${guild.name}`);
             await channel.send({
@@ -1012,70 +1084,15 @@ client.on('interactionCreate', async interaction => {
         } catch (error) {
           logError(`Erreur lors de l'ajout du rôle final à l'utilisateur ${userId}`, error);
           await channel.send({
-            content: `⚠️ Erreur lors de l'attribution du rôle final à <@${userId}>. Veuillez vérifier que le rôle existe et que le bot a les permissions nécessaires.`
+            content: `⚠️ Erreur lors de l'attribution du rôle à <@${userId}>. Détails: ${error.message || "Erreur inconnue"} (Code: ${error.code || "aucun code"})`
           });
         }
         
-        // Créer une nouvelle catégorie pour les WL complètes si elle n'existe pas
-        let completedCategory = guild.channels.cache.find(
-          c => c.type === ChannelType.GuildCategory && c.name === '🌟 WL Complète'
-        );
-        
-        if (!completedCategory) {
-          completedCategory = await guild.channels.create({
-            name: '🌟 WL Complète',
-            type: ChannelType.GuildCategory,
-            permissionOverwrites: [
-              {
-                id: guild.id, // @everyone
-                deny: [PermissionsBitField.Flags.ViewChannel]
-              },
-              {
-                id: guild.members.me.id, // Le bot
-                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
-              }
-            ]
-          });
-        }
-        
-        // Déplacer le canal dans la catégorie
-        await channel.setParent(completedCategory.id, { lockPermissions: false });
-        
-      } else {
-        // Si l'entretien est refusé
-        await channel.send({
-          content: `<@${userId}>, désolé, votre entretien de whitelist a été refusé. Vous pouvez contacter un modérateur pour en savoir plus.`
-        });
-        
-        // Utiliser la même catégorie que les refus de formulaire
-        const categoryRejectedName = guildConfig.categories?.rejected || '❌ WL refusée';
-        
-        let rejectedCategory = guild.channels.cache.find(
-          c => c.type === ChannelType.GuildCategory && c.name === categoryRejectedName
-        );
-        
-        if (!rejectedCategory) {
-          rejectedCategory = await guild.channels.create({
-            name: categoryRejectedName,
-            type: ChannelType.GuildCategory,
-            permissionOverwrites: [
-              {
-                id: guild.id, // @everyone
-                deny: [PermissionsBitField.Flags.ViewChannel]
-              },
-              {
-                id: guild.members.me.id, // Le bot
-                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
-              }
-            ]
-          });
-        }
-        
-        // Déplacer le canal dans la catégorie
-        await channel.setParent(rejectedCategory.id, { lockPermissions: false });
-      }
+        // Le reste de votre code pour la création de catégorie et déplacement de canal...
       
-      logInfo(`Entretien de whitelist ${action} pour l'utilisateur <@${userId}> par ${interaction.user.tag}`);
+      } else {
+        // Votre code pour le cas de refus...
+      }
       
     } catch (error) {
       logError(`Erreur lors du traitement du bouton d'entretien`, error);
