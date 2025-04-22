@@ -790,14 +790,37 @@ client.on('interactionCreate', async interaction => {
         .setFooter({ text: `Modérateur: ${interaction.user.tag}` })
         .setTimestamp();
       
-      // Mettre à jour le message avec le nouvel embed et retirer les boutons
-      await interaction.update({
-        content: isValidation 
-          ? `<@${userId}>, votre demande de whitelist a été approuvée! 🎉`
-          : `<@${userId}>, votre demande de whitelist a été refusée.`,
-        components: [],
-        embeds: [responseEmbed]
-      });
+      // Mettre à jour le message avec le nouvel embed et retirer les boutons de validation/refus
+      // Si c'est une validation, on va ajouter de nouveaux boutons pour l'entretien
+      if (isValidation) {
+        // Créer les boutons d'entretien
+        const validateInterviewButton = new ButtonBuilder()
+          .setCustomId(`validate_interview_${userId}`)
+          .setLabel('Valider l\'entretien')
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('✅');
+          
+        const rejectInterviewButton = new ButtonBuilder()
+          .setCustomId(`reject_interview_${userId}`)
+          .setLabel('Refuser l\'entretien')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('❌');
+        
+        const interviewButtonsRow = new ActionRowBuilder().addComponents(validateInterviewButton, rejectInterviewButton);
+        
+        await interaction.update({
+          content: `<@${userId}>, votre demande de whitelist a été approuvée! 🎉 Un modérateur va maintenant procéder à l'entretien.`,
+          components: [interviewButtonsRow],
+          embeds: [responseEmbed]
+        });
+      } else {
+        // Si c'est un refus, on retire tous les boutons
+        await interaction.update({
+          content: `<@${userId}>, votre demande de whitelist a été refusée.`,
+          components: [],
+          embeds: [responseEmbed]
+        });
+      }
       
       // Obtenir l'objet canal
       const channel = interaction.channel;
@@ -833,11 +856,35 @@ client.on('interactionCreate', async interaction => {
         
         // Envoyer un message de suivi
         await channel.send({
-          content: `<@${userId}>, félicitations! Votre whitelist a été validée. Un modérateur va bientôt vous contacter pour l'entretien.`
+          content: `<@${userId}>, félicitations! Votre formulaire de whitelist a été validé. Un modérateur va maintenant procéder à l'entretien.`
         });
         
+        // Trouver le membre et lui ajouter le rôle
+        try {
+          const userMember = await interaction.guild.members.fetch(userId);
+          
+          if (guildConfig.validRequestRoleId) {
+            await userMember.roles.add(guildConfig.validRequestRoleId);
+            logInfo(`Rôle de validation ajouté à ${userMember.user.tag}`);
+            
+            await channel.send({
+              content: `Le rôle <@&${guildConfig.validRequestRoleId}> a été attribué à <@${userId}>.`
+            });
+          } else {
+            logWarning(`Le rôle de validation n'est pas configuré pour le serveur ${interaction.guild.name}`);
+            await channel.send({
+              content: `⚠️ Attention : Le rôle de validation n'est pas configuré correctement. Veuillez contacter un administrateur.`
+            });
+          }
+        } catch (error) {
+          logError(`Erreur lors de l'ajout du rôle à l'utilisateur ${userId}`, error);
+          await channel.send({
+            content: `⚠️ Erreur lors de l'attribution du rôle à <@${userId}>. Veuillez vérifier que le rôle existe et que le bot a les permissions nécessaires.`
+          });
+        }
+        
       } else {
-        // Si refusé, déplacer vers la catégorie des demandes refusées (à créer si nécessaire)
+        // Si refusé, déplacer vers une catégorie des demandes refusées (à créer si nécessaire)
         let rejectedCategory = interaction.guild.channels.cache.find(
           c => c.type === ChannelType.GuildCategory && c.name === categoryRejectedName
         );
@@ -871,6 +918,167 @@ client.on('interactionCreate', async interaction => {
       
     } catch (error) {
       logError(`Erreur lors du traitement du bouton de validation/refus`, error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: "Désolé, une erreur s'est produite lors du traitement de votre action. Veuillez réessayer plus tard.",
+          ephemeral: true
+        });
+      }
+    }
+});
+
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isButton()) return;
+    
+    // Vérifier si c'est un bouton de validation ou de refus d'entretien
+    if (!interaction.customId.startsWith('validate_interview_') && !interaction.customId.startsWith('reject_interview_')) return;
+    
+    try {
+      // Récupérer l'ID de l'utilisateur concerné
+      const userId = interaction.customId.split('_')[2];
+      
+      // Récupérer la configuration du serveur
+      const guildConfig = getGuildConfig(interaction.guild.id);
+      if (!guildConfig) {
+        await interaction.reply({
+          content: "❌ Erreur: Configuration du serveur manquante. Veuillez contacter un administrateur.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      if (!guildConfig.staffWlRoleId) {
+        await interaction.reply({
+          content: "❌ La configuration du rôle modérateur est manquante sur ce serveur.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      // Vérifier si l'utilisateur a le rôle requis
+      const member = interaction.member;
+      if (!member.roles.cache.has(guildConfig.staffWlRoleId)) {
+        await interaction.reply({
+          content: "❌ Vous n'avez pas la permission d'utiliser ce bouton. Seuls les modérateurs peuvent valider ou refuser les entretiens.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      const isValidation = interaction.customId.startsWith('validate_interview_');
+      const action = isValidation ? "validé" : "refusé";
+      const emoji = isValidation ? "✅" : "❌";
+      const color = isValidation ? Colors.Green : Colors.Red;
+      
+      // Créer l'embed de réponse
+      const responseEmbed = new EmbedBuilder()
+        .setColor(color)
+        .setTitle(`${emoji} Entretien ${action}`)
+        .setDescription(`L'entretien de whitelist a été ${action} par <@${interaction.user.id}>.`)
+        .setFooter({ text: `Modérateur: ${interaction.user.tag}` })
+        .setTimestamp();
+      
+      // Mettre à jour le message avec le nouvel embed et retirer les boutons
+      await interaction.update({
+        content: isValidation 
+          ? `<@${userId}>, votre entretien de whitelist a été approuvé! 🎉 Bienvenue sur le serveur!`
+          : `<@${userId}>, votre entretien de whitelist a été refusé.`,
+        components: [],
+        embeds: [responseEmbed]
+      });
+      
+      // Obtenir l'objet canal
+      const channel = interaction.channel;
+      const guild = interaction.guild;
+      
+      if (isValidation) {
+        // Si l'entretien est validé, ajouter le rôle final de WL
+        try {
+          const userMember = await guild.members.fetch(userId);
+          
+          if (guildConfig.validWlRoleId) {
+            await userMember.roles.add(guildConfig.validWlRoleId);
+            logInfo(`Rôle de WL validée ajouté à ${userMember.user.tag}`);
+            
+            await channel.send({
+              content: `🎉 Félicitations <@${userId}>! Le rôle <@&${guildConfig.validWlRoleId}> vous a été attribué, vous êtes maintenant whitelisté sur le serveur.`
+            });
+          } else {
+            logWarning(`Le rôle de WL finale n'est pas configuré pour le serveur ${guild.name}`);
+            await channel.send({
+              content: `⚠️ Attention : Le rôle de WL finale n'est pas configuré correctement. Veuillez contacter un administrateur.`
+            });
+          }
+        } catch (error) {
+          logError(`Erreur lors de l'ajout du rôle final à l'utilisateur ${userId}`, error);
+          await channel.send({
+            content: `⚠️ Erreur lors de l'attribution du rôle final à <@${userId}>. Veuillez vérifier que le rôle existe et que le bot a les permissions nécessaires.`
+          });
+        }
+        
+        // Créer une nouvelle catégorie pour les WL complètes si elle n'existe pas
+        let completedCategory = guild.channels.cache.find(
+          c => c.type === ChannelType.GuildCategory && c.name === '🌟 WL Complète'
+        );
+        
+        if (!completedCategory) {
+          completedCategory = await guild.channels.create({
+            name: '🌟 WL Complète',
+            type: ChannelType.GuildCategory,
+            permissionOverwrites: [
+              {
+                id: guild.id, // @everyone
+                deny: [PermissionsBitField.Flags.ViewChannel]
+              },
+              {
+                id: guild.members.me.id, // Le bot
+                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+              }
+            ]
+          });
+        }
+        
+        // Déplacer le canal dans la catégorie
+        await channel.setParent(completedCategory.id, { lockPermissions: false });
+        
+      } else {
+        // Si l'entretien est refusé
+        await channel.send({
+          content: `<@${userId}>, désolé, votre entretien de whitelist a été refusé. Vous pouvez contacter un modérateur pour en savoir plus.`
+        });
+        
+        // Utiliser la même catégorie que les refus de formulaire
+        const categoryRejectedName = guildConfig.categories?.rejected || '❌ WL refusée';
+        
+        let rejectedCategory = guild.channels.cache.find(
+          c => c.type === ChannelType.GuildCategory && c.name === categoryRejectedName
+        );
+        
+        if (!rejectedCategory) {
+          rejectedCategory = await guild.channels.create({
+            name: categoryRejectedName,
+            type: ChannelType.GuildCategory,
+            permissionOverwrites: [
+              {
+                id: guild.id, // @everyone
+                deny: [PermissionsBitField.Flags.ViewChannel]
+              },
+              {
+                id: guild.members.me.id, // Le bot
+                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+              }
+            ]
+          });
+        }
+        
+        // Déplacer le canal dans la catégorie
+        await channel.setParent(rejectedCategory.id, { lockPermissions: false });
+      }
+      
+      logInfo(`Entretien de whitelist ${action} pour l'utilisateur <@${userId}> par ${interaction.user.tag}`);
+      
+    } catch (error) {
+      logError(`Erreur lors du traitement du bouton d'entretien`, error);
       if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({
           content: "Désolé, une erreur s'est produite lors du traitement de votre action. Veuillez réessayer plus tard.",
