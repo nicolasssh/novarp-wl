@@ -1,0 +1,846 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { 
+    Client, 
+    Collection,
+    Events, 
+    GatewayIntentBits, 
+    REST, 
+    Routes, 
+    EmbedBuilder, 
+    Colors, 
+    PermissionsBitField, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    ActionRowBuilder, 
+    ChannelType,
+    ModalBuilder, 
+    TextInputBuilder, 
+    TextInputStyle,
+    StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder
+} = require('discord.js');
+const dotenv = require('dotenv');
+dotenv.config();
+
+const token = process.env.APP_TOKEN;
+const clientId = process.env.CLIENT_ID;
+
+// Fonctions de logging
+const logInfo = (message) => console.log(`[INFO] ${message}`);
+const logWarning = (message) => console.log(`[WARNING] ${message}`);
+const logError = (message, error) => {
+    console.error(`[ERROR] ${message}`);
+    if (error) console.error(error);
+};
+
+// Créer le client Discord
+const client = new Client({ 
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages
+    ] 
+});
+
+client.commands = new Collection();
+
+// Import des utilitaires de configuration
+try {
+  const configManagerPath = path.join(__dirname, 'utils', 'configManager.js');
+  
+  if (!fs.existsSync(configManagerPath)) {
+    logError("Le fichier configManager.js est introuvable.");
+    process.exit(1);
+  }
+  
+  const { 
+    isGuildConfigured, 
+    getGuildConfig, 
+    setGuildConfigured, 
+    configEvents,
+    configuredGuilds 
+  } = require('./utils/configManager');
+} catch (error) {
+  logError("Erreur lors de l'importation du gestionnaire de configuration", error);
+  process.exit(1);
+}
+
+// Import du gestionnaire de configuration
+const { 
+  isGuildConfigured, 
+  getGuildConfig, 
+  setGuildConfigured, 
+  configEvents,
+  configuredGuilds 
+} = require('./utils/configManager');
+
+// Chargement des commandes
+const foldersPath = path.join(__dirname, 'commands');
+
+if (!fs.existsSync(foldersPath)) {
+  logError("Le dossier de commandes est introuvable.");
+  process.exit(1);
+}
+
+const commandFolders = fs.readdirSync(foldersPath);
+
+// Array pour stocker les commandes JSON pour le déploiement
+const commandsJson = [];
+
+for (const folder of commandFolders) {
+  const commandsPath = path.join(foldersPath, folder);
+  
+  if (!fs.existsSync(commandsPath)) {
+    continue;
+  }
+  
+  if (!fs.statSync(commandsPath).isDirectory()) {
+    continue;
+  }
+  
+  const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+  
+  for (const file of commandFiles) {
+    const filePath = path.join(commandsPath, file);
+    
+    try {
+      const command = require(filePath);
+      
+      if ('data' in command && 'execute' in command) {
+        client.commands.set(command.data.name, command);
+        commandsJson.push(command.data.toJSON());
+      } else {
+        logWarning(`La commande ${filePath} n'a pas les propriétés requises 'data' ou 'execute'.`);
+      }
+    } catch (error) {
+      logError(`Erreur lors du chargement de la commande ${filePath}`, error);
+    }
+  }
+}
+
+// Fonction pour déployer les commandes sur un serveur spécifique
+async function deployCommands(guildId) {
+  const rest = new REST().setToken(token);
+  
+  try {
+    logInfo(`Déploiement des commandes pour le serveur ${guildId}`);
+    
+    const data = await rest.put(
+      Routes.applicationGuildCommands(clientId, guildId),
+      { body: commandsJson },
+    );
+    
+    logInfo(`${data.length} commandes déployées avec succès sur ${guildId}`);
+    return true;
+  } catch (error) {
+    logError(`Erreur lors du déploiement des commandes sur ${guildId}`, error);
+    return false;
+  }
+}
+
+// Événement quand le bot est ajouté à un nouveau serveur
+client.on(Events.GuildCreate, async guild => {
+  logInfo(`Bot ajouté au serveur: ${guild.name} (${guild.id})`);
+  
+  // Vérifier les permissions du bot dans ce serveur
+  const me = guild.members.me;
+  if (!me) {
+    logError(`Impossible de récupérer l'objet membre du bot sur ${guild.name}`);
+    return;
+  }
+    
+  // Déployer les commandes sur ce nouveau serveur
+  const deploySuccess = await deployCommands(guild.id);
+  
+  if (!deploySuccess) {
+    logError(`Échec du déploiement des commandes sur ${guild.name}`);
+  }
+  
+  // Envoyer un message d'accueil
+  try {
+    // Trouver un canal où le bot peut envoyer des messages
+    
+    const systemChannel = guild.systemChannel;
+    const generalChannel = guild.channels.cache.find(channel => 
+      (channel.name.includes('général') || channel.name.includes('general')) && channel.isTextBased()
+    );
+    const firstTextChannel = guild.channels.cache.find(channel => channel.isTextBased());
+    
+    // Utiliser le premier canal disponible dans cet ordre
+    const targetChannel = systemChannel || generalChannel || firstTextChannel;
+    
+    if (targetChannel) {      
+      // Vérifier les permissions dans ce canal
+      const permissions = targetChannel.permissionsFor(me);
+      if (!permissions.has(PermissionsBitField.Flags.SendMessages)) {
+        logWarning(`Pas de permission d'envoi de messages dans ${targetChannel.name} sur ${guild.name}`);
+        return;
+      }
+      
+      const welcomeEmbed = new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle('👋 Bonjour!')
+        .setDescription(`Merci de m'avoir ajouté à votre serveur **${guild.name}**!`)
+        .addFields(
+          { name: '🔧 Configuration', value: 'Maintenant configurons le module avec la commande `/config`' }
+        )
+        .setFooter({ text: 'Merci de votre confiance!' })
+        .setTimestamp();
+      
+      // Envoyer l'embed
+      await targetChannel.send({ embeds: [welcomeEmbed] });
+    } else {
+      logWarning(`Aucun canal trouvé pour envoyer le message d'accueil sur ${guild.name}`);
+    }
+  } catch (error) {
+    logError(`Erreur lors de l'envoi du message d'accueil sur ${guild.name}`, error);
+  }
+});
+
+// Gestion des interactions de commande
+client.on(Events.InteractionCreate, async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+  
+  const commandName = interaction.commandName;
+  
+  const command = interaction.client.commands.get(commandName);
+  if (!command) {
+    return;
+  }
+  
+  // Vérifier la configuration sauf pour la commande config elle-même
+  if (commandName !== 'config' && !isGuildConfigured(interaction.guild.id)) {
+    return interaction.reply({
+      content: '⚠️ Ce serveur n\'a pas encore été configuré. Veuillez utiliser la commande `/config` d\'abord.',
+      ephemeral: true
+    });
+  }
+  
+  try {
+    await command.execute(interaction);
+  } catch (error) {
+    logError(`Erreur lors de l'exécution de la commande ${commandName}`, error);
+    
+    // Répondre à l'utilisateur
+    try {
+      const errorResponse = { 
+        content: 'Une erreur est survenue lors de l\'exécution de cette commande!', 
+        ephemeral: true
+      };
+      
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(errorResponse);
+      } else {
+        await interaction.reply(errorResponse);
+      }
+    } catch (replyError) {
+      logError(`Erreur lors de la réponse à l'erreur de commande`, replyError);
+    }
+  }
+});
+
+// Événement quand le bot est prêt
+client.once(Events.ClientReady, readyClient => {
+  logInfo(`Connecté en tant que ${readyClient.user.tag}`);
+  
+  // Déployer les commandes sur tous les serveurs existants
+  const guilds = client.guilds.cache;
+  
+  guilds.forEach(async guild => {
+    await deployCommands(guild.id);
+    
+    const configured = isGuildConfigured(guild.id);
+    configuredGuilds.set(guild.id, configured);
+    
+    // Log des permissions du bot sur ce serveur
+    const me = guild.members.me;
+    if (me) {
+      logInfo(`Permissions sur ${guild.name}: ${me.permissions.toArray().join(', ')}`);
+    }
+  });
+});
+
+// Gestion de l'événement de configuration terminée
+configEvents.on('guildConfigured', async (guildId, config) => {
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) {
+    logWarning(`Événement guildConfigured reçu pour un serveur inconnu: ${guildId}`);
+    return;
+  }
+  logInfo(`Configuration terminée pour le serveur ${guild.name} (${guildId})`);
+    
+  try {
+    if (!config) {
+      logWarning(`Configuration manquante pour le serveur ${guild.name}`);
+      return;
+    }
+    logInfo(`Configuration: ${JSON.stringify(config)}`);
+        
+    const requestChannelId = config.requestChannelId;
+    if (!requestChannelId) {
+      logWarning(`ID de canal manquant dans la configuration de ${guild.name}`);
+      return;
+    }
+    
+    const channel = guild.channels.cache.get(requestChannelId);
+    if (!channel) {
+      logWarning(`Canal ${requestChannelId} non trouvé sur ${guild.name}`);
+      return;
+    }
+    logInfo(`Canal de requêtes configuré: ${channel.name} (${channel.id})`);
+        
+    // Vérifier les permissions avant d'envoyer
+    const me = guild.members.me;
+    if (!me) {
+      logError(`Impossible de récupérer l'objet membre du bot sur ${guild.name}`);
+      return;
+    }
+    
+    const permissions = channel.permissionsFor(me);
+    logInfo(`Permissions du bot dans le canal ${channel.name}: ${permissions.toArray().join(', ')}`);
+    
+    if (!permissions.has(PermissionsBitField.Flags.SendMessages)) {
+      logWarning(`Le bot n'a pas la permission d'envoyer des messages dans le canal ${channel.name}`);
+      
+      // Tenter de trouver un canal alternatif pour informer l'utilisateur
+      const fallbackChannel = guild.channels.cache.find(c => 
+        c.isTextBased() && c.permissionsFor(me).has(PermissionsBitField.Flags.SendMessages)
+      );
+      
+      if (fallbackChannel) {
+        logInfo(`Envoi d'un message d'avertissement dans le canal alternatif: ${fallbackChannel.name}`);
+        await fallbackChannel.send({
+          content: `⚠️ Je n'ai pas la permission d'envoyer des messages dans le canal <#${channel.id}> que vous avez configuré. Veuillez vérifier mes permissions.`
+        });
+      }
+      return;
+    }
+    
+    const configSuccessEmbed = new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle('✅ Demandez votre whitelist')
+        .setDescription('Cliquez sur le bouton ci-dessous pour faire une demande de whitelist')
+        .addFields(
+            { name: 'Remplissez le formulaire', value: `Remplissez le formulaire qui vos sera envoyer dans votre channel !` },
+            { name: 'Attendez une validation', value: `Un douanier validera votre formulaire.` },
+            { name: 'Passez l\'entretien', value: 'Une fois le formulaire validé, passez un entretien avec un douanier pour avoir votre whitelist !' }
+        )
+
+    // Créer un bouton
+    const guideButton = new ButtonBuilder()
+        .setCustomId('request_wl')
+        .setLabel('Demandez votre whitelist')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('✅');
+
+    // Créer une ligne pour les boutons
+    const row = new ActionRowBuilder().addComponents(guideButton);
+
+    // Envoyer le message avec l'embed et le bouton
+    await channel.send({
+        embeds: [configSuccessEmbed],
+        components: [row]
+    });
+    logInfo(`Message de confirmation envoyé dans ${channel.name} sur ${guild.name}`);
+    
+  } catch (error) {
+    logError(`Erreur lors des actions post-configuration pour ${guild.name}`, error);
+  }
+});
+
+// Gestion des erreurs non capturées
+process.on('unhandledRejection', (reason, promise) => {
+  logError('Promesse rejetée non gérée', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  logError('Exception non capturée', error);
+  // Généralement, il est conseillé de fermer le processus après une exception non capturée
+  // Mais ici, nous allons continuer pour éviter un arrêt brutal du bot
+});
+
+client.on('interactionCreate', async interaction => {
+    // Vérifier si l'interaction est un bouton et si c'est le bon bouton
+    if (!interaction.isButton() || interaction.customId !== 'request_wl') return;
+  
+    try {
+      // Obtenir les informations sur l'utilisateur et la guilde
+      const guild = interaction.guild;
+      const user = interaction.user;
+      const member = interaction.member;
+  
+      // Générer un ID aléatoire de 5 caractères
+      const randomId = Math.random().toString(36).substring(2, 7);
+      
+      // Nom du nouveau canal
+      const channelName = `${randomId}-wl-${user.username}`;
+      
+      // Trouver ou créer la catégorie "demande de wl"
+      let category = guild.channels.cache.find(
+        c => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === '🔍 demande de whitelist'
+      );
+      
+      // Si la catégorie n'existe pas, la créer
+      if (!category) {
+        logInfo(`Création de la catégorie "🔍 Demande de Whitelist" sur ${guild.name}`);
+        category = await guild.channels.create({
+          name: '🔍 Demande de Whitelist',
+          type: ChannelType.GuildCategory,
+          permissionOverwrites: [
+            {
+              id: guild.id, // @everyone
+              deny: [PermissionsBitField.Flags.ViewChannel]
+            },
+            {
+              id: guild.members.me.id, // Le bot
+              allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+            }
+          ]
+        });
+      }
+      
+      // Créer le canal avec les permissions appropriées
+      const channel = await guild.channels.create({
+        name: channelName,
+        type: ChannelType.GuildText,
+        parent: category.id,
+        permissionOverwrites: [
+          {
+            id: guild.id, // @everyone
+            deny: [PermissionsBitField.Flags.ViewChannel]
+          },
+          {
+            id: user.id, // L'utilisateur qui a cliqué
+            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+          },
+          {
+            id: guild.members.me.id, // Le bot
+            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+          }
+        ]
+      });
+      
+      // Répondre à l'interaction pour éviter l'erreur "Interaction has already been acknowledged"
+      await interaction.reply({
+        content: `Votre demande de whitelist a été créée dans le canal ${channel}`,
+        ephemeral: true
+      });
+      
+      // Envoyer un message dans le nouveau canal et taguer l'utilisateur
+      const welcomeEmbed = new EmbedBuilder()
+        .setColor(Colors.Blue)
+        .setTitle('🔍 Demande de Whitelist')
+        .setDescription(`Bonjour ${user}, merci pour votre demande de whitelist!`)
+        .addFields(
+          { name: 'Instructions', value: 'Veuillez remplir le formulaire ci-dessous pour votre demande de whitelist.' }
+        );
+        
+      // Vous pouvez ajouter ici un bouton ou des champs pour le formulaire
+      const formButton = new ButtonBuilder()
+        .setCustomId('fill_form')
+        .setLabel('Remplir le formulaire')
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('📝');
+        
+      const row = new ActionRowBuilder().addComponents(formButton);
+      
+      await channel.send({
+        content: `<@${user.id}>, voici votre formulaire de demande de whitelist:`,
+        embeds: [welcomeEmbed],
+        components: [row]
+      });
+      
+      logInfo(`Canal de demande de whitelist créé: ${channelName} pour l'utilisateur ${user.tag}`);
+            
+    } catch (error) {      
+      logError(`Erreur lors de la création du canal de demande de whitelist`, error);
+      
+      // Informer l'utilisateur en cas d'erreur
+      if (!interaction.replied) {
+        await interaction.reply({
+          content: "Désolé, une erreur s'est produite lors de la création de votre demande de whitelist. Veuillez réessayer plus tard.",
+          ephemeral: true
+        });
+      }
+    }
+});
+
+client.on('interactionCreate', async interaction => {
+    // Vérifier si l'interaction est un bouton et si c'est le bon bouton
+    if (!interaction.isButton() || interaction.customId !== 'fill_form') return;
+  
+    try {
+      // Créer la modale
+      const modal = new ModalBuilder()
+        .setCustomId('wl_form_modal')
+        .setTitle('Formulaire de Whitelist');
+  
+      // Champ pour le nom du personnage
+      const nomInput = new TextInputBuilder()
+        .setCustomId('nom_personnage')
+        .setLabel('Nom du personnage')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+  
+      // Champ pour le prénom du personnage
+      const prenomInput = new TextInputBuilder()
+        .setCustomId('prenom_personnage')
+        .setLabel('Prénom du personnage')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+  
+      // Champ pour le lien du background
+      const backgroundInput = new TextInputBuilder()
+        .setCustomId('background_link')
+        .setLabel('Lien du background')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('https://')
+        .setRequired(true);
+  
+      // Pour la sélection légal/illégal, on va l'ajouter après soumission car les modales ne supportent pas les radio buttons
+  
+      // Création des rangées ActionRow pour chaque input
+      const nomRow = new ActionRowBuilder().addComponents(nomInput);
+      const prenomRow = new ActionRowBuilder().addComponents(prenomInput);
+      const backgroundRow = new ActionRowBuilder().addComponents(backgroundInput);
+  
+      // Ajout des rangées à la modale
+      modal.addComponents(nomRow, prenomRow, backgroundRow);
+  
+      // Afficher la modale à l'utilisateur
+      await interaction.showModal(modal);
+  
+    } catch (error) {
+      logError(`Erreur lors de l'affichage de la modale`, error);
+      if (!interaction.replied) {
+        await interaction.reply({
+          content: "Désolé, une erreur s'est produite lors de l'affichage du formulaire. Veuillez réessayer plus tard.",
+          ephemeral: true
+        });
+      }
+    }
+  });
+  
+  // Gestionnaire pour la soumission de la modale
+  client.on('interactionCreate', async interaction => {
+    if (!interaction.isModalSubmit() || interaction.customId !== 'wl_form_modal') return;
+  
+    try {
+      // Récupérer les valeurs soumises
+      const nom = interaction.fields.getTextInputValue('nom_personnage');
+      const prenom = interaction.fields.getTextInputValue('prenom_personnage');
+      const backgroundLink = interaction.fields.getTextInputValue('background_link');
+  
+      // Répondre à l'interaction de manière éphémère pour confirmer la soumission
+      await interaction.reply({
+        content: 'Formulaire soumis avec succès! Veuillez maintenant choisir si votre personnage est légal ou illégal.',
+        ephemeral: true
+      });
+  
+      // Créer un menu pour choisir légal ou illégal
+      const legalSelectMenu = new StringSelectMenuBuilder()
+        .setCustomId(`legal_status_${interaction.user.id}`)  // On stocke l'ID de l'utilisateur pour le retrouver après
+        .setPlaceholder('Sélectionnez le statut légal de votre personnage')
+        .addOptions(
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Légal')
+            .setValue('legal')
+            .setDescription('Personnage respectant les lois')
+            .setEmoji('✅'),
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Illégal')
+            .setValue('illegal')
+            .setDescription('Personnage du côté obscur')
+            .setEmoji('🚫')
+        );
+  
+      const selectRow = new ActionRowBuilder().addComponents(legalSelectMenu);
+  
+      // Stocker temporairement les données du formulaire (dans une map ou une base de données)
+      // Pour cet exemple, on va utiliser une map en mémoire
+      if (!client.formData) client.formData = new Map();
+      client.formData.set(interaction.user.id, {
+        nom,
+        prenom,
+        backgroundLink,
+        channelId: interaction.channelId
+      });
+  
+      // Envoyer le menu dans le canal
+      await interaction.channel.send({
+        content: `<@${interaction.user.id}>, veuillez sélectionner le statut légal de votre personnage:`,
+        components: [selectRow]
+      });
+  
+    } catch (error) {
+      logError(`Erreur lors du traitement de la soumission du formulaire`, error);
+      if (!interaction.replied) {
+        await interaction.reply({
+          content: "Désolé, une erreur s'est produite lors du traitement de votre formulaire. Veuillez réessayer plus tard.",
+          ephemeral: true
+        });
+      }
+    }
+  });
+  
+  // Gestionnaire pour la sélection légal/illégal
+  client.on('interactionCreate', async interaction => {
+    if (!interaction.isStringSelectMenu()) return;
+    
+    // Vérifier si c'est une sélection de statut légal
+    if (!interaction.customId.startsWith('legal_status_')) return;
+    
+    try {
+      // Extraire l'ID de l'utilisateur du customId
+      const userId = interaction.customId.split('_')[2];
+      
+      // Vérifier si c'est bien l'utilisateur concerné qui répond
+      if (userId !== interaction.user.id) {
+        await interaction.reply({
+          content: "Ce menu ne vous est pas destiné.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      // Récupérer le choix légal/illégal
+      const legalStatus = interaction.values[0]; // 'legal' ou 'illegal'
+      
+      // Récupérer les données du formulaire stockées précédemment
+      if (!client.formData || !client.formData.has(userId)) {
+        await interaction.reply({
+          content: "Désolé, vos données de formulaire n'ont pas été trouvées. Veuillez réessayer.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      const formData = client.formData.get(userId);
+      // Ajouter le statut légal aux données
+      formData.legalStatus = legalStatus;
+      
+      // Créer l'embed pour afficher les réponses
+      const responseEmbed = new EmbedBuilder()
+        .setColor(legalStatus === 'legal' ? Colors.Green : Colors.Red)
+        .setTitle('📝 Formulaire de Whitelist soumis')
+        .addFields(
+          { name: 'Nom', value: formData.nom, inline: true },
+          { name: 'Prénom', value: formData.prenom, inline: true },
+          { name: 'Statut', value: legalStatus === 'legal' ? '✅ Légal' : '🚫 Illégal', inline: true },
+          { name: 'Background', value: `[Lien vers le background](${formData.backgroundLink})` }
+        )
+        .setFooter({ text: `Demande soumise par ${interaction.user.tag}` })
+        .setTimestamp();
+      
+      // Récupérer la configuration du serveur
+      const guildConfig = getGuildConfig(interaction.guild.id);
+      if (!guildConfig || !guildConfig.staffWlRoleId) {
+        logWarning(`Configuration du rôle modérateur manquante pour le serveur ${interaction.guild.name}`);
+      }
+      
+      // Créer les boutons de validation/refus
+      const validateButton = new ButtonBuilder()
+        .setCustomId(`validate_wl_${userId}`)
+        .setLabel('Valider')
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('✅');
+        
+      const rejectButton = new ButtonBuilder()
+        .setCustomId(`reject_wl_${userId}`)
+        .setLabel('Refuser')
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('❌');
+      
+      const buttonsRow = new ActionRowBuilder().addComponents(validateButton, rejectButton);
+      
+      // Envoyer l'embed dans le canal avec les boutons
+      await interaction.update({ 
+        content: `<@${userId}>, votre formulaire a été soumis avec succès! Un modérateur va l'examiner prochainement.`,
+        components: [buttonsRow],
+        embeds: [responseEmbed]
+      });
+      
+      // Obtenir l'objet canal
+      const channel = interaction.channel;
+      const guild = interaction.guild;
+      
+      // Créer ou trouver la catégorie "⏳ WL en attente de validation"
+      let waitingCategory = guild.channels.cache.find(
+        c => c.type === ChannelType.GuildCategory && c.name === '⏳ WL en attente de validation'
+      );
+      
+      if (!waitingCategory) {
+        waitingCategory = await guild.channels.create({
+          name: '⏳ WL en attente de validation',
+          type: ChannelType.GuildCategory,
+          permissionOverwrites: [
+            {
+              id: guild.id, // @everyone
+              deny: [PermissionsBitField.Flags.ViewChannel]
+            },
+            {
+              id: guild.members.me.id, // Le bot
+              allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+            }
+          ]
+        });
+      }
+      
+      // Déplacer le canal vers la nouvelle catégorie
+      await channel.setParent(waitingCategory.id, { 
+        lockPermissions: false // Ne pas synchroniser les permissions avec la catégorie
+      });
+      
+      // Supprimer les données temporaires
+      client.formData.delete(userId);
+      
+      logInfo(`Formulaire de whitelist soumis par ${interaction.user.tag} dans ${channel.name}`);
+      
+    } catch (error) {
+      logError(`Erreur lors du traitement de la sélection légal/illégal`, error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: "Désolé, une erreur s'est produite lors du traitement de votre sélection. Veuillez réessayer plus tard.",
+          ephemeral: true
+        });
+      }
+    }
+  });
+  
+  // Gestionnaire pour les boutons de validation/refus
+  client.on('interactionCreate', async interaction => {
+    if (!interaction.isButton()) return;
+    
+    // Vérifier si c'est un bouton de validation ou de refus
+    if (!interaction.customId.startsWith('validate_wl_') && !interaction.customId.startsWith('reject_wl_')) return;
+    
+    try {
+      // Récupérer l'ID de l'utilisateur concerné
+      const userId = interaction.customId.split('_')[2];
+      
+      // Récupérer la configuration du serveur
+      const guildConfig = getGuildConfig(interaction.guild.id);
+      if (!guildConfig || !guildConfig.staffWlRoleId) {
+        await interaction.reply({
+          content: "❌ La configuration du rôle modérateur est manquante sur ce serveur.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      // Vérifier si l'utilisateur a le rôle requis
+      const member = interaction.member;
+      if (!member.roles.cache.has(guildConfig.staffWlRoleId)) {
+        await interaction.reply({
+          content: "❌ Vous n'avez pas la permission d'utiliser ce bouton. Seuls les modérateurs peuvent valider ou refuser les demandes.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      const isValidation = interaction.customId.startsWith('validate_wl_');
+      const action = isValidation ? "validée" : "refusée";
+      const emoji = isValidation ? "✅" : "❌";
+      const color = isValidation ? Colors.Green : Colors.Red;
+      
+      // Créer l'embed de réponse
+      const responseEmbed = new EmbedBuilder()
+        .setColor(color)
+        .setTitle(`${emoji} Demande ${action}`)
+        .setDescription(`La demande de whitelist a été ${action} par <@${interaction.user.id}>.`)
+        .setFooter({ text: `Modérateur: ${interaction.user.tag}` })
+        .setTimestamp();
+      
+      // Mettre à jour le message avec le nouvel embed et retirer les boutons
+      await interaction.update({
+        content: isValidation 
+          ? `<@${userId}>, votre demande de whitelist a été approuvée! 🎉`
+          : `<@${userId}>, votre demande de whitelist a été refusée.`,
+        components: [],
+        embeds: [responseEmbed]
+      });
+      
+      // Obtenir l'objet canal
+      const channel = interaction.channel;
+      
+      if (isValidation) {
+        // Si validé, déplacer vers une catégorie "✅ WL validée" (à créer si nécessaire)
+        let validatedCategory = interaction.guild.channels.cache.find(
+          c => c.type === ChannelType.GuildCategory && c.name === '✅ WL validée'
+        );
+        
+        if (!validatedCategory) {
+          validatedCategory = await interaction.guild.channels.create({
+            name: '✅ WL validée',
+            type: ChannelType.GuildCategory,
+            permissionOverwrites: [
+              {
+                id: interaction.guild.id, // @everyone
+                deny: [PermissionsBitField.Flags.ViewChannel]
+              },
+              {
+                id: interaction.guild.members.me.id, // Le bot
+                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+              }
+            ]
+          });
+        }
+        
+        await channel.setParent(validatedCategory.id, { lockPermissions: false });
+        
+        // Envoyer un message de suivi
+        await channel.send({
+          content: `<@${userId}>, félicitations! Votre whitelist a été validée. Un modérateur va bientôt vous contacter pour l'entretien.`
+        });
+        
+      } else {
+        // Si refusé, déplacer vers une catégorie "❌ WL refusée" (à créer si nécessaire)
+        let rejectedCategory = interaction.guild.channels.cache.find(
+          c => c.type === ChannelType.GuildCategory && c.name === '❌ WL refusée'
+        );
+        
+        if (!rejectedCategory) {
+          rejectedCategory = await interaction.guild.channels.create({
+            name: '❌ WL refusée',
+            type: ChannelType.GuildCategory,
+            permissionOverwrites: [
+              {
+                id: interaction.guild.id, // @everyone
+                deny: [PermissionsBitField.Flags.ViewChannel]
+              },
+              {
+                id: interaction.guild.members.me.id, // Le bot
+                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+              }
+            ]
+          });
+        }
+        
+        await channel.setParent(rejectedCategory.id, { lockPermissions: false });
+        
+        // Envoyer un message de suivi
+        await channel.send({
+          content: `<@${userId}>, désolé, votre demande de whitelist a été refusée. Vous pouvez contacter un modérateur pour en savoir plus.`
+        });
+      }
+      
+      logInfo(`Demande de whitelist ${action} pour l'utilisateur <@${userId}> par ${interaction.user.tag}`);
+      
+    } catch (error) {
+      logError(`Erreur lors du traitement du bouton de validation/refus`, error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: "Désolé, une erreur s'est produite lors du traitement de votre action. Veuillez réessayer plus tard.",
+          ephemeral: true
+        });
+      }
+    }
+});
+
+// Connexion du bot
+client.login(token)
+  .then(() => console.log('Bot connecté avec succès'))
+  .catch(error => {
+    logError('Erreur de connexion du bot', error);
+    process.exit(1);
+  });
