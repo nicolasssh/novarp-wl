@@ -359,6 +359,9 @@ process.on('uncaughtException', (error) => {
   // Mais ici, nous allons continuer pour éviter un arrêt brutal du bot
 });
 
+// ------------------- GESTIONNAIRES D'ÉVÉNEMENTS POUR LES INTERACTIONS -------------------
+
+// Gestionnaire pour le bouton "Demander une whitelist"
 client.on('interactionCreate', async interaction => {
     // Vérifier si l'interaction est un bouton et si c'est le bon bouton
     if (!interaction.isButton() || interaction.customId !== 'request_wl') return;
@@ -369,22 +372,36 @@ client.on('interactionCreate', async interaction => {
       const user = interaction.user;
       const member = interaction.member;
   
+      // Récupérer la configuration du serveur
+      const guildConfig = getGuildConfig(guild.id);
+      if (!guildConfig) {
+        logWarning(`Configuration manquante pour le serveur ${guild.name}`);
+        await interaction.reply({
+          content: "❌ Erreur: Configuration du serveur manquante. Veuillez contacter un administrateur.",
+          ephemeral: true
+        });
+        return;
+      }
+  
+      // Récupérer le nom de la catégorie depuis la configuration
+      const categoryName = guildConfig.categories?.newRequests || '🔍 Demande de Whitelist';
+  
       // Générer un ID aléatoire de 5 caractères
       const randomId = Math.random().toString(36).substring(2, 7);
       
       // Nom du nouveau canal
       const channelName = `${randomId}-wl-${user.username}`;
       
-      // Trouver ou créer la catégorie "demande de wl"
+      // Trouver ou créer la catégorie pour les nouvelles demandes
       let category = guild.channels.cache.find(
-        c => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === '🔍 demande de whitelist'
+        c => c.type === ChannelType.GuildCategory && c.name === categoryName
       );
       
       // Si la catégorie n'existe pas, la créer
       if (!category) {
-        logInfo(`Création de la catégorie "🔍 Demande de Whitelist" sur ${guild.name}`);
+        logInfo(`Création de la catégorie "${categoryName}" sur ${guild.name}`);
         category = await guild.channels.create({
-          name: '🔍 Demande de Whitelist',
+          name: categoryName,
           type: ChannelType.GuildCategory,
           permissionOverwrites: [
             {
@@ -465,6 +482,7 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
+// Gestionnaire pour le bouton "Remplir le formulaire"
 client.on('interactionCreate', async interaction => {
     // Vérifier si l'interaction est un bouton et si c'est le bon bouton
     if (!interaction.isButton() || interaction.customId !== 'fill_form') return;
@@ -521,8 +539,8 @@ client.on('interactionCreate', async interaction => {
     }
   });
   
-  // Gestionnaire pour la soumission de la modale
-  client.on('interactionCreate', async interaction => {
+// Gestionnaire pour la soumission de la modale
+client.on('interactionCreate', async interaction => {
     if (!interaction.isModalSubmit() || interaction.customId !== 'wl_form_modal') return;
   
     try {
@@ -583,8 +601,8 @@ client.on('interactionCreate', async interaction => {
     }
   });
   
-  // Gestionnaire pour la sélection légal/illégal
-  client.on('interactionCreate', async interaction => {
+// Gestionnaire pour la sélection légal/illégal
+client.on('interactionCreate', async interaction => {
     if (!interaction.isStringSelectMenu()) return;
     
     // Vérifier si c'est une sélection de statut légal
@@ -619,6 +637,17 @@ client.on('interactionCreate', async interaction => {
       // Ajouter le statut légal aux données
       formData.legalStatus = legalStatus;
       
+      // Récupérer la configuration du serveur
+      const guildConfig = getGuildConfig(interaction.guild.id);
+      if (!guildConfig) {
+        logWarning(`Configuration manquante pour le serveur ${interaction.guild.name}`);
+        await interaction.reply({
+          content: "❌ Erreur: Configuration du serveur manquante. Veuillez contacter un administrateur.",
+          ephemeral: true
+        });
+        return;
+      }
+      
       // Créer l'embed pour afficher les réponses
       const responseEmbed = new EmbedBuilder()
         .setColor(legalStatus === 'legal' ? Colors.Green : Colors.Red)
@@ -632,9 +661,8 @@ client.on('interactionCreate', async interaction => {
         .setFooter({ text: `Demande soumise par ${interaction.user.tag}` })
         .setTimestamp();
       
-      // Récupérer la configuration du serveur
-      const guildConfig = getGuildConfig(interaction.guild.id);
-      if (!guildConfig || !guildConfig.staffWlRoleId) {
+      // Vérifier que le rôle de validation existe
+      if (!guildConfig.staffWlRoleId) {
         logWarning(`Configuration du rôle modérateur manquante pour le serveur ${interaction.guild.name}`);
       }
       
@@ -664,14 +692,17 @@ client.on('interactionCreate', async interaction => {
       const channel = interaction.channel;
       const guild = interaction.guild;
       
-      // Créer ou trouver la catégorie "⏳ WL en attente de validation"
+      // Récupérer le nom de la catégorie depuis la configuration
+      const categoryPendingName = guildConfig.categories?.pending || '⏳ WL en attente de validation';
+      
+      // Créer ou trouver la catégorie "En attente de validation"
       let waitingCategory = guild.channels.cache.find(
-        c => c.type === ChannelType.GuildCategory && c.name === '⏳ WL en attente de validation'
+        c => c.type === ChannelType.GuildCategory && c.name === categoryPendingName
       );
       
       if (!waitingCategory) {
         waitingCategory = await guild.channels.create({
-          name: '⏳ WL en attente de validation',
+          name: categoryPendingName,
           type: ChannelType.GuildCategory,
           permissionOverwrites: [
             {
@@ -707,8 +738,8 @@ client.on('interactionCreate', async interaction => {
     }
   });
   
-  // Gestionnaire pour les boutons de validation/refus
-  client.on('interactionCreate', async interaction => {
+// Gestionnaire pour les boutons de validation/refus
+client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
     
     // Vérifier si c'est un bouton de validation ou de refus
@@ -720,7 +751,15 @@ client.on('interactionCreate', async interaction => {
       
       // Récupérer la configuration du serveur
       const guildConfig = getGuildConfig(interaction.guild.id);
-      if (!guildConfig || !guildConfig.staffWlRoleId) {
+      if (!guildConfig) {
+        await interaction.reply({
+          content: "❌ Erreur: Configuration du serveur manquante. Veuillez contacter un administrateur.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      if (!guildConfig.staffWlRoleId) {
         await interaction.reply({
           content: "❌ La configuration du rôle modérateur est manquante sur ce serveur.",
           ephemeral: true
@@ -763,15 +802,19 @@ client.on('interactionCreate', async interaction => {
       // Obtenir l'objet canal
       const channel = interaction.channel;
       
+      // Récupérer les noms des catégories depuis la configuration
+      const categoryApprovedName = guildConfig.categories?.approved || '✅ WL validée';
+      const categoryRejectedName = guildConfig.categories?.rejected || '❌ WL refusée';
+      
       if (isValidation) {
-        // Si validé, déplacer vers une catégorie "✅ WL validée" (à créer si nécessaire)
+        // Si validé, déplacer vers la catégorie des demandes validées (à créer si nécessaire)
         let validatedCategory = interaction.guild.channels.cache.find(
-          c => c.type === ChannelType.GuildCategory && c.name === '✅ WL validée'
+          c => c.type === ChannelType.GuildCategory && c.name === categoryApprovedName
         );
         
         if (!validatedCategory) {
           validatedCategory = await interaction.guild.channels.create({
-            name: '✅ WL validée',
+            name: categoryApprovedName,
             type: ChannelType.GuildCategory,
             permissionOverwrites: [
               {
@@ -794,14 +837,14 @@ client.on('interactionCreate', async interaction => {
         });
         
       } else {
-        // Si refusé, déplacer vers une catégorie "❌ WL refusée" (à créer si nécessaire)
+        // Si refusé, déplacer vers la catégorie des demandes refusées (à créer si nécessaire)
         let rejectedCategory = interaction.guild.channels.cache.find(
-          c => c.type === ChannelType.GuildCategory && c.name === '❌ WL refusée'
+          c => c.type === ChannelType.GuildCategory && c.name === categoryRejectedName
         );
         
         if (!rejectedCategory) {
           rejectedCategory = await interaction.guild.channels.create({
-            name: '❌ WL refusée',
+            name: categoryRejectedName,
             type: ChannelType.GuildCategory,
             permissionOverwrites: [
               {

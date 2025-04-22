@@ -28,6 +28,26 @@ module.exports = {
         option.setName('valid_wl')
           .setDescription('Choisissez le rôle de validation de WL')
           .setRequired(true)
+    )
+    .addStringOption(option =>
+        option.setName('cat_new_requests')
+          .setDescription('Nom de la catégorie pour les nouvelles demandes')
+          .setRequired(false)
+    )
+    .addStringOption(option =>
+        option.setName('cat_pending')
+          .setDescription('Nom de la catégorie pour les demandes en attente de validation')
+          .setRequired(false)
+    )
+    .addStringOption(option =>
+        option.setName('cat_approved')
+          .setDescription('Nom de la catégorie pour les demandes validées')
+          .setRequired(false)
+    )
+    .addStringOption(option =>
+        option.setName('cat_rejected')
+          .setDescription('Nom de la catégorie pour les demandes refusées')
+          .setRequired(false)
     ),
   
     async execute(interaction) {
@@ -37,6 +57,12 @@ module.exports = {
           const staffWlRole = interaction.options.getRole('staff_wl_role');
           const validRequestRole = interaction.options.getRole('valid_request');
           const validWlRole = interaction.options.getRole('valid_wl');
+          
+          // Récupérer les noms des catégories avec des valeurs par défaut
+          const categoryNewRequests = interaction.options.getString('cat_new_requests') || '🔍 Demande de Whitelist';
+          const categoryPending = interaction.options.getString('cat_pending') || '⏳ WL en attente de validation';
+          const categoryApproved = interaction.options.getString('cat_approved') || '✅ WL validée';
+          const categoryRejected = interaction.options.getString('cat_rejected') || '❌ WL refusée';
           
           // Récupérer l'ID du serveur
           const guildId = interaction.guild.id;
@@ -48,6 +74,12 @@ module.exports = {
             staffWlRoleId: staffWlRole.id,
             validRequestRoleId: validRequestRole.id,
             validWlRoleId: validWlRole.id,
+            categories: {
+              newRequests: categoryNewRequests,
+              pending: categoryPending,
+              approved: categoryApproved,
+              rejected: categoryRejected
+            },
             updatedAt: new Date().toISOString(),
             updatedBy: interaction.user.id
           };
@@ -65,10 +97,21 @@ module.exports = {
           fs.writeFileSync(configFilePath, JSON.stringify(configData, null, 2), 'utf8');
           setGuildConfigured(guildId, true);
           
-          // Confirmer la configuration avec flags au lieu de ephemeral
+          // Confirmer la configuration
           await interaction.reply({
-            content: `✅ Configuration mise à jour!\nLe canal de demande de WL est : ${requestChannel}\nLe role minimum des douaniers est: ${staffWlRole}\nLe role de validation du formulaire WL est: ${validRequestRole}\nLe role de validation de WL est: ${validWlRole}`,
-            flags: 64  // Utiliser flags: 64 au lieu de ephemeral: true
+            content: `✅ Configuration mise à jour!\n
+**Paramètres principaux :**
+▸ Canal de demande de WL : ${requestChannel}
+▸ Rôle minimum des douaniers : ${staffWlRole}
+▸ Rôle validation du formulaire : ${validRequestRole}
+▸ Rôle validation de WL : ${validWlRole}
+
+**Noms des catégories :**
+▸ Nouvelles demandes : \`${categoryNewRequests}\`
+▸ En attente de validation : \`${categoryPending}\`
+▸ Demandes validées : \`${categoryApproved}\`
+▸ Demandes refusées : \`${categoryRejected}\``,
+            ephemeral: true
           });
         } catch (error) {
           console.error(`Erreur lors de la sauvegarde de la configuration:`, error);
@@ -77,12 +120,12 @@ module.exports = {
           if (interaction.replied || interaction.deferred) {
             await interaction.followUp({
               content: "❌ Une erreur est survenue lors de la sauvegarde de la configuration.",
-              flags: 64
+              ephemeral: true
             });
           } else {
             await interaction.reply({
               content: "❌ Une erreur est survenue lors de la sauvegarde de la configuration.",
-              flags: 64
+              ephemeral: true
             });
           }
         }
