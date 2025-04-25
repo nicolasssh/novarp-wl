@@ -41,7 +41,9 @@ function setGuildConfigured(guildId, configured = true) {
     configEvents.emit('configChanged', guildId, configured);
     
     if (configured) {
-      configEvents.emit('guildConfigured', guildId, getGuildConfig(guildId));
+      const config = getGuildConfig(guildId);
+      console.log(`[DEBUG] Émission de l'événement guildConfigured pour ${guildId} avec config:`, config);
+      configEvents.emit('guildConfigured', guildId, config);
     } else {
       configEvents.emit('guildUnconfigured', guildId);
     }

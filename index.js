@@ -262,6 +262,7 @@ client.once(Events.ClientReady, readyClient => {
 
 // Gestion de l'événement de configuration terminée
 configEvents.on('guildConfigured', async (guildId, config) => {
+  console.log(`[DEBUG] Événement guildConfigured reçu pour ${guildId}`);
   const guild = client.guilds.cache.get(guildId);
   if (!guild) {
     logWarning(`Événement guildConfigured reçu pour un serveur inconnu: ${guildId}`);
@@ -1103,6 +1104,40 @@ client.on('interactionCreate', async interaction => {
         });
       }
     }
+});
+
+client.on(Events.GuildMemberAdd, async member => {
+  try {
+    const guildId = member.guild.id;
+    
+    // Vérifier si le serveur est configuré
+    if (!isGuildConfigured(guildId)) {
+      return;
+    }
+    
+    // Récupérer la configuration
+    const guildConfig = getGuildConfig(guildId);
+    if (!guildConfig || !guildConfig.defaultRoleId) {
+      return;
+    }
+    
+    // Récupérer le rôle par défaut
+    const defaultRole = member.guild.roles.cache.get(guildConfig.defaultRoleId);
+    if (!defaultRole) {
+      logWarning(`Le rôle par défaut configuré (${guildConfig.defaultRoleId}) n'existe pas sur le serveur ${member.guild.name}`);
+      return;
+    }
+    
+    // Ajouter le rôle au membre
+    try {
+      await member.roles.add(defaultRole);
+      logInfo(`Rôle par défaut (${defaultRole.name}) attribué à ${member.user.tag} sur ${member.guild.name}`);
+    } catch (error) {
+      logError(`Erreur lors de l'attribution du rôle par défaut à ${member.user.tag}`, error);
+    }
+  } catch (error) {
+    logError(`Erreur dans le gestionnaire d'événement GuildMemberAdd`, error);
+  }
 });
 
 // Connexion du bot

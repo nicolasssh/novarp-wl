@@ -29,6 +29,11 @@ module.exports = {
           .setDescription('Choisissez le rôle de validation de WL')
           .setRequired(true)
     )
+    .addRoleOption(option =>
+        option.setName('default_role')
+          .setDescription('Rôle par défaut attribué aux nouveaux membres')
+          .setRequired(false)
+    )
     .addStringOption(option =>
         option.setName('cat_new_requests')
           .setDescription('Nom de la catégorie pour les nouvelles demandes')
@@ -57,6 +62,7 @@ module.exports = {
           const staffWlRole = interaction.options.getRole('staff_wl_role');
           const validRequestRole = interaction.options.getRole('valid_request');
           const validWlRole = interaction.options.getRole('valid_wl');
+          const defaultRole = interaction.options.getRole('default_role');
           
           // Récupérer les noms des catégories avec des valeurs par défaut
           const categoryNewRequests = interaction.options.getString('cat_new_requests') || '🔍 Demande de Whitelist';
@@ -74,6 +80,7 @@ module.exports = {
             staffWlRoleId: staffWlRole.id,
             validRequestRoleId: validRequestRole.id,
             validWlRoleId: validWlRole.id,
+            defaultRoleId: defaultRole ? defaultRole.id : null,
             categories: {
               newRequests: categoryNewRequests,
               pending: categoryPending,
@@ -105,6 +112,7 @@ module.exports = {
 ▸ Rôle minimum des douaniers : ${staffWlRole}
 ▸ Rôle validation du formulaire : ${validRequestRole}
 ▸ Rôle validation de WL : ${validWlRole}
+▸ Rôle par défaut : ${defaultRole ? defaultRole : 'Non configuré'}
 
 **Noms des catégories :**
 ▸ Nouvelles demandes : \`${categoryNewRequests}\`
