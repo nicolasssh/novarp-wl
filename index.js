@@ -322,7 +322,7 @@ configEvents.on('guildConfigured', async (guildId, config) => {
         .setTitle('✅ Demandez votre whitelist')
         .setDescription('Cliquez sur le bouton ci-dessous pour faire une demande de whitelist')
         .addFields(
-            { name: 'Remplissez le formulaire', value: `Remplissez le formulaire qui vos sera envoyé dans votre channel !` },
+            { name: 'Remplissez le formulaire', value: `Remplissez le formulaire qui vous sera envoyé dans votre channel !` },
             { name: 'Attendez une validation', value: `Un douanier validera votre formulaire.` },
             { name: 'Passez l\'entretien', value: 'Une fois le formulaire validé, passez un entretien avec un douanier pour avoir votre whitelist !' }
         )
