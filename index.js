@@ -626,6 +626,8 @@ client.on('interactionCreate', async interaction => {
         backgroundLink,
         channelId: interaction.channelId
       });
+
+      interaction.user.username = prenom + ' ' + nom;
   
       // Envoyer le menu dans le canal
       await interaction.channel.send({
