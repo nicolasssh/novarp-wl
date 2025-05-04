@@ -1164,6 +1164,11 @@ client.on('interactionCreate', async interaction => {
               });
               return;
             }
+
+            const rolesToRemove = [
+              guild.roles.cache.get(guildConfig.defaultRoleId),
+              guild.roles.cache.get(guildConfig.validRequestRoleId)
+            ];
             
             // Vérifier la hiérarchie des rôles
             if (guild.members.me.roles.highest.position <= roleToAdd.position) {
@@ -1186,9 +1191,15 @@ client.on('interactionCreate', async interaction => {
             try {
               await userMember.roles.add(roleToAdd);
               logInfo(`Rôle de WL validée ajouté à ${userMember.user.tag}`);
+              rolesToRemove.forEach(role => {
+                if (role) {
+                  userMember.roles.remove(role)
+                }
+              });
               
-              await channel.send({
-                content: `🎉 Félicitations <@${userId}>! Le rôle <@&${guildConfig.validWlRoleId}> vous a été attribué, vous êtes maintenant whitelisté sur le serveur.`
+              await channel.permissionOverwrites.edit(userMember, {
+                SEND_MESSAGES: false,
+                VIEW_CHANNEL: false
               });
             } catch (roleError) {
               // Gestion détaillée de l'erreur d'ajout de rôle
