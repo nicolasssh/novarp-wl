@@ -322,7 +322,7 @@ configEvents.on('guildConfigured', async (guildId, config) => {
         .setTitle('✅ Demandez votre whitelist')
         .setDescription('Cliquez sur le bouton ci-dessous pour faire une demande de whitelist')
         .addFields(
-            { name: 'Remplissez le formulaire', value: `Remplissez le formulaire qui vos sera envoyer dans votre channel !` },
+            { name: 'Remplissez le formulaire', value: `Remplissez le formulaire qui vos sera envoyé dans votre channel !` },
             { name: 'Attendez une validation', value: `Un douanier validera votre formulaire.` },
             { name: 'Passez l\'entretien', value: 'Une fois le formulaire validé, passez un entretien avec un douanier pour avoir votre whitelist !' }
         )
@@ -401,21 +401,55 @@ client.on('interactionCreate', async interaction => {
       // Si la catégorie n'existe pas, la créer
       if (!category) {
         logInfo(`Création de la catégorie "${categoryName}" sur ${guild.name}`);
+        
+        // Lors de la création des catégories et des canaux, ajouter des permissions pour tous les rôles au-dessus de staffWlRoleId
+        const staffRole = interaction.guild.roles.cache.get(guildConfig.staffWlRoleId);
+        if (!staffRole) {
+          await interaction.reply({
+            content: "❌ Le rôle de modérateur configuré est introuvable sur ce serveur.",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        // Récupérer tous les rôles au-dessus de staffWlRoleId
+        const higherRoles = interaction.guild.roles.cache.filter(role => role.position > staffRole.position);
+        
+        // Ajouter les permissions pour ces rôles lors de la création des catégories et des canaux
+        const permissionOverwrites = [
+          {
+            id: interaction.guild.id, // @everyone
+            deny: [PermissionsBitField.Flags.ViewChannel]
+          },
+          {
+            id: interaction.guild.members.me.id, // Le bot
+            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+          },
+          ...higherRoles.map(role => ({
+            id: role.id,
+            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+          }))
+        ];
+        
+        // Utiliser ces permissions lors de la création des catégories et des canaux
         category = await guild.channels.create({
           name: categoryName,
           type: ChannelType.GuildCategory,
-          permissionOverwrites: [
-            {
-              id: guild.id, // @everyone
-              deny: [PermissionsBitField.Flags.ViewChannel]
-            },
-            {
-              id: guild.members.me.id, // Le bot
-              allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
-            }
-          ]
+          permissionOverwrites
         });
       }
+
+      const staffRole = interaction.guild.roles.cache.get(guildConfig.staffWlRoleId);
+      if (!staffRole) {
+        await interaction.reply({
+          content: "❌ Le rôle de modérateur configuré est introuvable sur ce serveur.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      // Récupérer tous les rôles au-dessus de staffWlRoleId
+      const higherRoles = interaction.guild.roles.cache.filter(role => role.position > staffRole.position);
       
       // Créer le canal avec les permissions appropriées
       const channel = await guild.channels.create({
@@ -434,7 +468,15 @@ client.on('interactionCreate', async interaction => {
           {
             id: guild.members.me.id, // Le bot
             allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
-          }
+          },
+          {
+            id: staffRole.id, // Rôle staffWlRoleId
+            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+          },
+          ...higherRoles.map(role => ({
+            id: role.id,
+            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+          }))
         ]
       });
       
@@ -702,19 +744,40 @@ client.on('interactionCreate', async interaction => {
       );
       
       if (!waitingCategory) {
+        // Lors de la création des catégories et des canaux, ajouter des permissions pour tous les rôles au-dessus de staffWlRoleId
+        const staffRole = interaction.guild.roles.cache.get(guildConfig.staffWlRoleId);
+        if (!staffRole) {
+          await interaction.reply({
+            content: "❌ Le rôle de modérateur configuré est introuvable sur ce serveur.",
+            ephemeral: true
+          });
+          return;
+        }
+        
+        // Récupérer tous les rôles au-dessus de staffWlRoleId
+        const higherRoles = interaction.guild.roles.cache.filter(role => role.position > staffRole.position);
+        
+        // Ajouter les permissions pour ces rôles lors de la création des catégories et des canaux
+        const permissionOverwrites = [
+          {
+            id: interaction.guild.id, // @everyone
+            deny: [PermissionsBitField.Flags.ViewChannel]
+          },
+          {
+            id: interaction.guild.members.me.id, // Le bot
+            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+          },
+          ...higherRoles.map(role => ({
+            id: role.id,
+            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+          }))
+        ];
+        
+        // Utiliser ces permissions lors de la création des catégories et des canaux
         waitingCategory = await guild.channels.create({
           name: categoryPendingName,
           type: ChannelType.GuildCategory,
-          permissionOverwrites: [
-            {
-              id: guild.id, // @everyone
-              deny: [PermissionsBitField.Flags.ViewChannel]
-            },
-            {
-              id: guild.members.me.id, // Le bot
-              allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
-            }
-          ]
+          permissionOverwrites
         });
       }
       
@@ -768,11 +831,20 @@ client.on('interactionCreate', async interaction => {
         return;
       }
       
-      // Vérifier si l'utilisateur a le rôle requis
-      const member = interaction.member;
-      if (!member.roles.cache.has(guildConfig.staffWlRoleId)) {
+      // Vérifier si l'utilisateur a au moins le rôle staffWlRoleId ou un rôle supérieur
+      const staffRole = interaction.guild.roles.cache.get(guildConfig.staffWlRoleId);
+      if (!staffRole) {
         await interaction.reply({
-          content: "❌ Vous n'avez pas la permission d'utiliser ce bouton. Seuls les modérateurs peuvent valider ou refuser les demandes.",
+          content: "❌ Le rôle de modérateur configuré est introuvable sur ce serveur.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      const hasRequiredRole = interaction.member.roles.cache.some(role => role.position >= staffRole.position);
+      if (!hasRequiredRole) {
+        await interaction.reply({
+          content: "❌ Vous n'avez pas la permission d'utiliser ce bouton. Seuls les modérateurs ou utilisateurs avec un rôle supérieur peuvent valider ou refuser les demandes.",
           ephemeral: true
         });
         return;
@@ -837,19 +909,40 @@ client.on('interactionCreate', async interaction => {
         );
         
         if (!validatedCategory) {
+          // Lors de la création des catégories et des canaux, ajouter des permissions pour tous les rôles au-dessus de staffWlRoleId
+          const staffRole = interaction.guild.roles.cache.get(guildConfig.staffWlRoleId);
+          if (!staffRole) {
+            await interaction.reply({
+              content: "❌ Le rôle de modérateur configuré est introuvable sur ce serveur.",
+              ephemeral: true
+            });
+            return;
+          }
+          
+          // Récupérer tous les rôles au-dessus de staffWlRoleId
+          const higherRoles = interaction.guild.roles.cache.filter(role => role.position > staffRole.position);
+          
+          // Ajouter les permissions pour ces rôles lors de la création des catégories et des canaux
+          const permissionOverwrites = [
+            {
+              id: interaction.guild.id, // @everyone
+              deny: [PermissionsBitField.Flags.ViewChannel]
+            },
+            {
+              id: interaction.guild.members.me.id, // Le bot
+              allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+            },
+            ...higherRoles.map(role => ({
+              id: role.id,
+              allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+            }))
+          ];
+          
+          // Utiliser ces permissions lors de la création des catégories et des canaux
           validatedCategory = await interaction.guild.channels.create({
             name: categoryApprovedName,
             type: ChannelType.GuildCategory,
-            permissionOverwrites: [
-              {
-                id: interaction.guild.id, // @everyone
-                deny: [PermissionsBitField.Flags.ViewChannel]
-              },
-              {
-                id: interaction.guild.members.me.id, // Le bot
-                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
-              }
-            ]
+            permissionOverwrites
           });
         }
         
@@ -924,19 +1017,40 @@ client.on('interactionCreate', async interaction => {
         );
         
         if (!rejectedCategory) {
+          // Lors de la création des catégories et des canaux, ajouter des permissions pour tous les rôles au-dessus de staffWlRoleId
+          const staffRole = interaction.guild.roles.cache.get(guildConfig.staffWlRoleId);
+          if (!staffRole) {
+            await interaction.reply({
+              content: "❌ Le rôle de modérateur configuré est introuvable sur ce serveur.",
+              ephemeral: true
+            });
+            return;
+          }
+          
+          // Récupérer tous les rôles au-dessus de staffWlRoleId
+          const higherRoles = interaction.guild.roles.cache.filter(role => role.position > staffRole.position);
+          
+          // Ajouter les permissions pour ces rôles lors de la création des catégories et des canaux
+          const permissionOverwrites = [
+            {
+              id: interaction.guild.id, // @everyone
+              deny: [PermissionsBitField.Flags.ViewChannel]
+            },
+            {
+              id: interaction.guild.members.me.id, // Le bot
+              allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+            },
+            ...higherRoles.map(role => ({
+              id: role.id,
+              allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+            }))
+          ];
+          
+          // Utiliser ces permissions lors de la création des catégories et des canaux
           rejectedCategory = await interaction.guild.channels.create({
             name: categoryRejectedName,
             type: ChannelType.GuildCategory,
-            permissionOverwrites: [
-              {
-                id: interaction.guild.id, // @everyone
-                deny: [PermissionsBitField.Flags.ViewChannel]
-              },
-              {
-                id: interaction.guild.members.me.id, // Le bot
-                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
-              }
-            ]
+            permissionOverwrites
           });
         }
         
@@ -989,11 +1103,20 @@ client.on('interactionCreate', async interaction => {
         return;
       }
       
-      // Vérifier si l'utilisateur a le rôle requis
-      const member = interaction.member;
-      if (!member.roles.cache.has(guildConfig.staffWlRoleId)) {
+      // Vérifier si l'utilisateur a au moins le rôle staffWlRoleId ou un rôle supérieur
+      const staffRole = interaction.guild.roles.cache.get(guildConfig.staffWlRoleId);
+      if (!staffRole) {
         await interaction.reply({
-          content: "❌ Vous n'avez pas la permission d'utiliser ce bouton. Seuls les modérateurs peuvent valider ou refuser les entretiens.",
+          content: "❌ Le rôle de modérateur configuré est introuvable sur ce serveur.",
+          ephemeral: true
+        });
+        return;
+      }
+      
+      const hasRequiredRole = interaction.member.roles.cache.some(role => role.position >= staffRole.position);
+      if (!hasRequiredRole) {
+        await interaction.reply({
+          content: "❌ Vous n'avez pas la permission d'utiliser ce bouton. Seuls les modérateurs ou utilisateurs avec un rôle supérieur peuvent valider ou refuser les demandes.",
           ephemeral: true
         });
         return;
