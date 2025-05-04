@@ -1197,9 +1197,7 @@ client.on('interactionCreate', async interaction => {
                 }
               });
               
-              await channel.permissionOverwrites.edit(userMember, {
-                VIEW_CHANNEL: false
-              });
+              await channel.permissionOverwrites.delete(userMember);
             } catch (roleError) {
               // Gestion détaillée de l'erreur d'ajout de rôle
               const errorDetails = `Code: ${roleError.code}, Message: ${roleError.message}`;
