@@ -1198,7 +1198,6 @@ client.on('interactionCreate', async interaction => {
               });
               
               await channel.permissionOverwrites.edit(userMember, {
-                SEND_MESSAGES: false,
                 VIEW_CHANNEL: false
               });
             } catch (roleError) {
